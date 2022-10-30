@@ -7,17 +7,21 @@ export const apiSlice = createApi({
   reducerPath: 'api',
   // All of our requests will have URLs starting with '/fakeApi'
   baseQuery: fetchBaseQuery({ baseUrl: '/fakeApi' }),
-  tagTypes: ['Post'],
+  tagTypes: ['POST'],
   // The "endpoints" represent operations and requests for this server
   endpoints: (builder) => ({
     // The `getPosts` endpoint is a "query" operation that returns data
     getPosts: builder.query({
       // The URL for the request is '/fakeApi/posts'
       query: () => '/posts',
-      providesTags: ['Post'],
+      providesTags: (result = [], error, arg) => [
+        'POST',
+        ...result.map(({ id }) => ({ type: 'POST', id })),
+      ],
     }),
     getPost: builder.query({
       query: (postId) => `/posts/${postId}`,
+      providesTags: (result, error, arg) => [{ type: 'POST', id: arg }],
     }),
     addNewPost: builder.mutation({
       query: (initialPost) => ({
@@ -25,11 +29,57 @@ export const apiSlice = createApi({
         method: 'POST',
         body: initialPost,
       }),
-      invalidatesTags: ['Post'],
+      invalidatesTags: ['POST'],
+    }),
+    editPost: builder.mutation({
+      query: (post) => ({
+        url: `/posts/${post.id}`,
+        method: 'PATCH',
+        body: post,
+      }),
+      invalidatesTags: (result, error, arg) => [{ type: 'POST', id: arg.id }],
+    }),
+    addReaction: builder.mutation({
+      query: ({ postId, reaction }) => ({
+        url: `posts/${postId}/reactions`,
+        method: 'POST',
+        // In a real app, we'd probably need to base this on user ID somehow
+        // so that a user can't do the same reaction more than once
+        body: { reaction },
+      }),
+      async onQueryStarted({ postId, reaction }, { dispatch, queryFulfilled }) {
+        // `updateQueryData` requires the endpoint name and cache key arguments,
+        // so it knows which piece of cache state to update
+        const patchResult = dispatch(
+          apiSlice.util.updateQueryData('getPosts', undefined, (draft) => {
+            // The `draft` is Immer-wrapped and can be "mutated" like in createSlice
+            const post = draft.find((post) => post.id === postId)
+            if (post) {
+              post.reactions[reaction]++
+            }
+          })
+        )
+        const patchPost = dispatch(
+          apiSlice.util.updateQueryData('getPost', postId, (draftPost) => {
+            draftPost.reactions[reaction]++
+          })
+        )
+        try {
+          await queryFulfilled
+        } catch {
+          patchResult.undo()
+          patchPost.undo()
+        }
+      },
     }),
   }),
 })
 
 // Export the auto-generated hook for the `getPosts` query endpoint
-export const { useGetPostsQuery, useGetPostQuery, useAddNewPostMutation } =
-  apiSlice
+export const {
+  useGetPostsQuery,
+  useGetPostQuery,
+  useAddNewPostMutation,
+  useEditPostMutation,
+  useAddReactionMutation,
+} = apiSlice
